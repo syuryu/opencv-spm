@@ -1,8 +1,65 @@
-diff --git forkSrcPrefix/platforms/ios/build_framework.py forkDstPrefix/platforms/ios/build_framework.py
-index 1904a67ae7c9709f8bced3fb3600c1b8662c306d..b59eef1e03d8ef6b7920df7159b9fd0e0aafbdee 100755
---- forkSrcPrefix/platforms/ios/build_framework.py
-+++ forkDstPrefix/platforms/ios/build_framework.py
-@@ -429,6 +429,12 @@ class Builder:
+diff --git a/platforms/ios/build_framework.py b/platforms/ios/build_framework.py
+index 1904a67..759d221 100644
+--- a/platforms/ios/build_framework.py
++++ b/platforms/ios/build_framework.py
+@@ -50,7 +50,7 @@ CURRENT_FILE_DIR = os.path.dirname(__file__)
+ 
+ 
+ class Builder:
+-    def __init__(self, opencv, contrib, dynamic, bitcodedisabled, exclude, disable, enablenonfree, targets, debug, debug_info, framework_name, run_tests, build_docs, swiftdisabled):
++    def __init__(self, opencv, contrib, dynamic, bitcodedisabled, exclude, disable, enablenonfree, targets, debug, debug_info, framework_name, run_tests, build_docs, swiftdisabled, extra_cmake_options):
+         self.opencv = os.path.abspath(opencv)
+         self.contrib = None
+         if contrib:
+@@ -72,6 +72,11 @@ class Builder:
+         self.run_tests = run_tests
+         self.build_docs = build_docs
+         self.swiftdisabled = swiftdisabled
++        self.dsym_dir = os.path.abspath("dsym")
++        if not os.path.exists(self.dsym_dir):
++            os.makedirs(self.dsym_dir)
++
++        self.extra_cmake_options = extra_cmake_options
+ 
+     def checkCMakeVersion(self):
+         if get_xcode_version() >= (12, 2):
+@@ -200,7 +205,8 @@ class Builder:
+             "-GXcode",
+             "-DAPPLE_FRAMEWORK=ON",
+             "-DCMAKE_INSTALL_PREFIX=install",
+-            "-DCMAKE_BUILD_TYPE=%s" % self.getConfiguration(),
++            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
++            "-DBUILD_WITH_DEBUG_INFO=ON",
+             "-DOPENCV_INCLUDE_INSTALL_PATH=include",
+             "-DOPENCV_3P_LIB_INSTALL_PATH=lib/3rdparty",
+             "-DFRAMEWORK_NAME=%s" % self.framework_name,
+@@ -224,12 +230,16 @@ class Builder:
+         if len(self.disable) > 0:
+             args += ["-DWITH_%s=OFF" % f for f in self.disable]
+ 
++        if self.extra_cmake_options:
++            args.extend(self.extra_cmake_options.split())
++
+         return args
+ 
+     def getBuildCommand(self, arch, target):
+ 
+         buildcmd = [
+             "xcodebuild",
++            "DEBUG_INFORMATION_FORMAT=dwarf-with-dsym",
+         ]
+ 
+         if (self.dynamic or self.build_objc_wrapper) and not self.bitcodedisabled and target == "iPhoneOS":
+@@ -332,6 +342,8 @@ class Builder:
+             execute(buildcmd + ["-target", "ALL_BUILD", "build"], cwd = builddir + "/modules/objc/framework_build")
+             execute(["cmake", "-DBUILD_TYPE=%s" % self.getConfiguration(), "-DCMAKE_INSTALL_PREFIX=%s" % (builddir + "/install"), "-P", "cmake_install.cmake"], cwd = builddir + "/modules/objc/framework_build")
+ 
++        self.collectDSYMs(builddir, arch, target)
++
+     def mergeLibs(self, builddir):
+         res = os.path.join(builddir, "lib", self.getConfiguration(), "libopencv_merged.a")
+         libs = glob.glob(os.path.join(builddir, "install", "lib", "*.a"))
+@@ -429,6 +441,12 @@ class Builder:
                          file.write(body)
          if self.build_objc_wrapper:
              copy_tree(os.path.join(builddirs[0], "install", "lib", name + ".framework", "Headers"), os.path.join(dstdir, "Headers"))
@@ -15,10 +72,22 @@ index 1904a67ae7c9709f8bced3fb3600c1b8662c306d..b59eef1e03d8ef6b7920df7159b9fd0e
              platform_name_map = {
                      "arm": "armv7-apple-ios",
                      "arm64": "arm64-apple-ios",
-@@ -484,6 +490,24 @@ class Builder:
+@@ -483,10 +501,48 @@ class Builder:
+         # Copy Apple privacy manifest
          shutil.copyfile(os.path.join(CURRENT_FILE_DIR, "PrivacyInfo.xcprivacy"),
                          os.path.join(resdir, "PrivacyInfo.xcprivacy"))
- 
++        self.includeDSYMsInXCFramework(outdir)
++
++    def includeDSYMsInXCFramework(self, outdir):
++        xcframework_path = os.path.join(outdir, self.framework_name + ".xcframework")
++        if not os.path.exists(xcframework_path):
++            os.makedirs(xcframework_path)
++
++        for dsym_dir in os.listdir(self.dsym_dir):
++            dsym_source = os.path.join(self.dsym_dir, dsym_dir, self.framework_name + ".framework.dSYM")
++            if os.path.exists(dsym_source):
++                shutil.copytree(dsym_source, os.path.join(xcframework_path, dsym_dir + ".dSYM"))
++
 +    def mergeModuleHeaders(self, merged_header, module_header):
 +        print("Merging module headers:\n\t%s\n\t%s" % (merged_header, module_header))
 +        with codecs.open(merged_header, "r", "utf-8") as file:
@@ -36,7 +105,36 @@ index 1904a67ae7c9709f8bced3fb3600c1b8662c306d..b59eef1e03d8ef6b7920df7159b9fd0e
 +
 +        with codecs.open(merged_header, "w", "utf-8") as file:
 +            file.writelines(merged_lines)
-+
+ 
      def copy_samples(self, outdir):
          return
  
++    def collectDSYMs(self, builddir, arch, target):
++        config = self.getConfiguration()
++        dsym_source = os.path.join(builddir, config, self.framework_name + ".framework.dSYM")
++        if os.path.exists(dsym_source):
++            dsym_dest_dir = os.path.join(self.dsym_dir, arch + "-" + target)
++            if not os.path.exists(dsym_dest_dir):
++                os.makedirs(dsym_dest_dir)
++            shutil.copytree(dsym_source, os.path.join(dsym_dest_dir, self.framework_name + ".framework.dSYM"))
++
+ class iOSBuilder(Builder):
+ 
+     def getToolchain(self, arch, target):
+@@ -545,6 +601,8 @@ if __name__ == "__main__":
+     parser.add_argument('--run_tests', default=False, dest='run_tests', action='store_true', help='Run tests')
+     parser.add_argument('--build_docs', default=False, dest='build_docs', action='store_true', help='Build docs')
+     parser.add_argument('--disable-swift', default=False, dest='swiftdisabled', action='store_true', help='Disable building of Swift extensions')
++    parser.add_argument('--extra_cmake_options', default='', help='Extra options to pass to CMake')
++
+ 
+     args, unknown_args = parser.parse_known_args()
+     if unknown_args:
+@@ -598,6 +656,6 @@ if __name__ == "__main__":
+         if iphonesimulator_archs:
+             targets.append((iphonesimulator_archs, "iPhoneSimulator"))
+ 
+-    b = iOSBuilder(args.opencv, args.contrib, args.dynamic, args.bitcodedisabled, args.without, args.disable, args.enablenonfree, targets, args.debug, args.debug_info, args.framework_name, args.run_tests, args.build_docs, args.swiftdisabled)
++    b = iOSBuilder(args.opencv, args.contrib, args.dynamic, args.bitcodedisabled, args.without, args.disable, args.enablenonfree, targets, args.debug, args.debug_info, args.framework_name, args.run_tests, args.build_docs, args.swiftdisabled, args.extra_cmake_options)
+ 
+     b.build(args.out)

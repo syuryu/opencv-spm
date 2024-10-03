@@ -48,6 +48,10 @@ jobs:
           git commit -m "Update Package.swift"
           git push
 
+      - name: Verify dSYM files
+        run: |
+          unzip -l opencv2.xcframework.zip | grep '\.dSYM' || { echo "dSYM files not found in the xcframework"; exit 1; }
+
       - name: Release
         uses: softprops/action-gh-release@v1
         with:

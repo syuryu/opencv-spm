@@ -49,9 +49,26 @@ jobs:
           pip3 install pathlib
           python3 platforms/apple/build_xcframework.py \
               --iphoneos_archs=arm64 \
-              --visionos_archs=arm64 \
-              --visionsimulator_archs=arm64 \
-              --disable-bitcode -o build
+              --iphonesimulator_archs= \
+              --macos_archs= \
+              --catalyst_archs= \
+              --visionos_archs= \
+              --visionsimulator_archs= \
+              --disable-bitcode -o build \
+              --extra_cmake_options="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_DEBUG_INFO=ON"
+
+      - name: Include dSYM files in xcframework
+        working-directory: opencv
+        run: |
+          # Find all .framework directories
+          find build/opencv2.xcframework -type d -name "*.framework" | while read framework_path; do
+            # Corresponding dSYM file
+            dsym_source_path="${framework_path}.dSYM"
+            if [ -d "$dsym_source_path" ]; then
+              # Copy dSYM to the same directory as the framework
+              cp -R "$dsym_source_path" "$(dirname "$framework_path")/"
+            fi
+          done
 
       - name: Zip artifact
         working-directory: opencv
