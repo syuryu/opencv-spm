@@ -4,7 +4,7 @@
 import PackageDescription
 
 let version = "4.10.0"
-let checksum = "7d15e3242015a1273854216d9f96c074248067db46334c47300ecb9a3b392774"
+let checksum = "41cc0000cabec080dffc181ddcbe0221cb8ad0dcd3aebd87c02dc61071d027df"
 
 let package = Package(
     name: "OpenCV",
